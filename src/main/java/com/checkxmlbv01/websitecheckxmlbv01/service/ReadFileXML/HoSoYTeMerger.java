@@ -1,7 +1,6 @@
 package com.checkxmlbv01.websitecheckxmlbv01.service.ReadFileXML;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,14 +21,14 @@ public class HoSoYTeMerger {
 
         Map<String, HoSoKhamBenh> map = new LinkedHashMap<>();
 
-        // 1️⃣ XML1 – tạo hồ sơ gốc
+        // XML1 – tạo hồ sơ gốc
         for (xml1 x1 : xml1List) {
             HoSoKhamBenh hs = new HoSoKhamBenh();
             hs.setThongTinChung(x1);
             map.put(x1.getMaLk(), hs);
         }
 
-        // 2️⃣ XML2 – thuốc
+        // XML2 – thuốc
         for (xml2 x2 : xml2List) {
             HoSoKhamBenh hs = map.get(x2.getMaLk());
             if (hs != null) {
@@ -37,7 +36,7 @@ public class HoSoYTeMerger {
             }
         }
 
-        // 3️⃣ XML3 – dịch vụ
+        // XML3 – dịch vụ
         for (xml3 x3 : xml3List) {
             HoSoKhamBenh hs = map.get(x3.getMaLk());
             if (hs != null) {
@@ -45,7 +44,7 @@ public class HoSoYTeMerger {
             }
         }
 
-        // 4️⃣ XML4 – CLS
+        // XML4 – CLS
         for (xml4 x4 : xml4List) {
             HoSoKhamBenh hs = map.get(x4.getMaLk());
             if (hs != null) {

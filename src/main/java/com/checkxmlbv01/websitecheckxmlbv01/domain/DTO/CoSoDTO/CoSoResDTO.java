@@ -1,4 +1,4 @@
-package com.checkxmlbv01.websitecheckxmlbv01.domain.DTO;
+package com.checkxmlbv01.websitecheckxmlbv01.domain.DTO.CoSoDTO;
 
 import java.time.LocalDateTime;
 

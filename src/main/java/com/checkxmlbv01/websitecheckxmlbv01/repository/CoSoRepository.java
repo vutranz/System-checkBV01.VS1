@@ -8,5 +8,5 @@ import com.checkxmlbv01.websitecheckxmlbv01.domain.CoSo;
 @Repository
 public interface CoSoRepository extends JpaRepository<CoSo, Long> {
 
-    
+    boolean existsByMaCoSo(String maCoSo);
 } 
