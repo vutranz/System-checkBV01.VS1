@@ -8,15 +8,20 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ErrorKCBDetail {
-    private String maLk;
+   private String maLk;
     private String maBn;
     private String maDichVu;
-    private String maBsCĐ;
-    private String maBsTH;
+
+    private String maBsCd;      // 🔥 bỏ dấu
+    private String maBsTh;
+    private String maBsDocKq;
+
     private String tenDichVu;
-    private String ngayYL;
-    private String ngayTHYL;
-    private String Ngaykq;
+
+    private String ngayYl;
+    private String ngayThyl;
+    private String ngayKq;      // 🔥 sửa chuẩn
+
     private String hoten;
     private String errorDetail;
 

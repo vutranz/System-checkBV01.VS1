@@ -1,18 +1,20 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import * as bacSiService from "../services/bacSiService";
 import * as phanCongService from "../services/phanCongService";
 import * as dvktService from "../services/dichVuKyThuatService";
 import * as caLamViecService from "../services/caLamViecService";
+import * as nangLucService from "../services/nangLucService";
 
 const BS_PAGE_SIZE = 6;
-const PC_PAGE_SIZE = 2; // Số lượng Dịch vụ hiển thị trên 1 trang ở cột giữa
+const PC_PAGE_SIZE = 2; 
 
 const PhanCongPage = () => {
   const [bacSiList, setBacSiList] = useState([]);
   const [selectedBacSi, setSelectedBacSi] = useState(null);
   const [phanCongList, setPhanCongList] = useState([]);
-  const [dvktList, setDvktList] = useState([]);
+  const [dvktGroups, setDvktGroups] = useState([]);
   const [caLamViecList, setCaLamViecList] = useState([]);
+  const [dvktByNangLuc, setDvktByNangLuc] = useState([]);
 
   const [search, setSearch] = useState(""); 
   const [pcSearch, setPcSearch] = useState(""); 
@@ -20,236 +22,255 @@ const PhanCongPage = () => {
   const [filterDvktChaId, setFilterDvktChaId] = useState("");
 
   const [bsPage, setBsPage] = useState(1);
-  const [pcPage, setPcPage] = useState(1); // State phân trang cho cột giữa
+  const [pcPage, setPcPage] = useState(1);
   const [loading, setLoading] = useState(false);
 
   const [form, setForm] = useState({
-    thu: "T2",
-    caLamViecId: "",
-    dvktId: "",
-    vaiTro: "DOC_KQ",
+    selectedDvktIds: [],
+    selectedThus: [],
+    selectedCaRoles: {}, 
   });
 
-  // ================= 1. LOAD DATA =================
+  // ================= 1. LOAD MASTER DATA =================
   useEffect(() => {
     const loadMaster = async () => {
       try {
-        const [bs, dvkt, ca] = await Promise.all([
+        const [bs, allDvkt, ca] = await Promise.all([
           bacSiService.getAll(),
           dvktService.getAll(),
           caLamViecService.getAll(),
         ]);
         setBacSiList(Array.isArray(bs) ? bs : bs?.data || []);
-        setDvktList(Array.isArray(dvkt) ? dvkt : dvkt?.data || []);
         setCaLamViecList(Array.isArray(ca) ? ca : ca?.data || []);
+        setDvktGroups(allDvkt.filter(d => !d.dvktChaId));
         if (bs.length > 0) setSelectedBacSi(bs[0]);
       } catch (err) { console.error("Lỗi load data:", err); }
     };
     loadMaster();
   }, []);
 
-  const loadPhanCong = async (bacSiId) => {
+  // ================= 2. LOAD DATA THEO BÁC SĨ =================
+  const loadDoctorData = useCallback(async (bacSiId) => {
+    if (!bacSiId) return;
     try {
-      const list = await phanCongService.getByBacSi(bacSiId);
-      setPhanCongList(Array.isArray(list) ? list : []);
-      setPcPage(1); // Reset trang khi đổi bác sĩ
-    } catch (err) { setPhanCongList([]); }
-  };
+      setLoading(true);
+      const [pc, nl] = await Promise.all([
+        phanCongService.getByBacSi(bacSiId),
+        nangLucService.getByBacSi(bacSiId)
+      ]);
+      setPhanCongList(Array.isArray(pc) ? pc : []);
+      setDvktByNangLuc(Array.isArray(nl) ? nl : []);
+      setPcPage(1);
+      setForm({ selectedDvktIds: [], selectedThus: [], selectedCaRoles: {} });
+    } catch (err) { 
+      setPhanCongList([]);
+      setDvktByNangLuc([]);
+    } finally { setLoading(false); }
+  }, []);
 
   useEffect(() => {
-    if (selectedBacSi) loadPhanCong(selectedBacSi.id);
-  }, [selectedBacSi]);
+    loadDoctorData(selectedBacSi?.id);
+  }, [selectedBacSi, loadDoctorData]);
 
-  // ================= 2. LOGIC LỌC & NHÓM =================
+  // ================= 3. LOGIC PHÂN TRANG & LỌC =================
   
-  const filteredBacSi = bacSiList.filter(b => b.hoTen?.toLowerCase().includes(search.toLowerCase()));
-  const pagedBacSi = filteredBacSi.slice((bsPage - 1) * BS_PAGE_SIZE, bsPage * BS_PAGE_SIZE);
+  // Phân trang Bác sĩ (Cột 1)
+  const filteredBacSi = useMemo(() => bacSiList.filter(b => b.hoTen?.toLowerCase().includes(search.toLowerCase())), [bacSiList, search]);
+  const pagedBacSi = useMemo(() => filteredBacSi.slice((bsPage - 1) * BS_PAGE_SIZE, bsPage * BS_PAGE_SIZE), [filteredBacSi, bsPage]);
   const totalBsPages = Math.ceil(filteredBacSi.length / BS_PAGE_SIZE) || 1;
 
-  const filteredDvktOptions = useMemo(() => {
-    return dvktList.filter(d => {
-      const matchSearch = d.tenDvkt?.toLowerCase().includes(dvktSearch.toLowerCase()) || d.maDvkt?.toLowerCase().includes(dvktSearch.toLowerCase());
-      const matchCha = filterDvktChaId === "" ? true : (filterDvktChaId === "null" ? !d.dvktChaId : d.dvktChaId === Number(filterDvktChaId));
+  // Khử trùng & Lọc Dịch vụ Năng lực (Cột 3)
+  const uniqueNangLucOptions = useMemo(() => {
+    const uniqueMap = new Map();
+    dvktByNangLuc.forEach(item => {
+      const id = item.dvktId || item.id || item.dichVuKyThuat?.id;
+      const ten = item.tenDvkt || item.dichVuKyThuat?.tenDvkt;
+      const ma = item.maDvkt || item.dichVuKyThuat?.maDvkt;
+      const chaId = item.dvktChaId || item.dichVuKyThuat?.dvktChaId;
+      if (id && !uniqueMap.has(id)) uniqueMap.set(id, { id, ten, ma, chaId });
+    });
+    return Array.from(uniqueMap.values()).filter(d => {
+      const matchSearch = d.ten?.toLowerCase().includes(dvktSearch.toLowerCase()) || d.ma?.toLowerCase().includes(dvktSearch.toLowerCase());
+      const matchCha = filterDvktChaId === "" ? true : Number(d.chaId) === Number(filterDvktChaId);
       return matchSearch && matchCha;
     });
-  }, [dvktList, dvktSearch, filterDvktChaId]);
+  }, [dvktByNangLuc, dvktSearch, filterDvktChaId]);
 
-  // LOGIC NHÓM VÀ PHÂN TRANG CỘT GIỮA
+  // Phân trang Lịch trực đã nhóm (Cột 2)
   const { pagedGroups, totalPcPages } = useMemo(() => {
     const filtered = phanCongList.filter(pc => 
       pc.tenDvkt?.toLowerCase().includes(pcSearch.toLowerCase()) || pc.thu?.toLowerCase().includes(pcSearch.toLowerCase())
     );
-
-    // Nhóm toàn bộ
     const grouped = filtered.reduce((acc, pc) => {
       if (!acc[pc.tenDvkt]) acc[pc.tenDvkt] = {};
       if (!acc[pc.tenDvkt][pc.thu]) acc[pc.tenDvkt][pc.thu] = [];
       acc[pc.tenDvkt][pc.thu].push(pc);
       return acc;
     }, {});
-
-    const groupKeys = Object.keys(grouped);
-    const totalPages = Math.ceil(groupKeys.length / PC_PAGE_SIZE) || 1;
-    
-    // Cắt mảng theo trang
-    const pagedKeys = groupKeys.slice((pcPage - 1) * PC_PAGE_SIZE, pcPage * PC_PAGE_SIZE);
-    
+    const keys = Object.keys(grouped);
+    const pagedKeys = keys.slice((pcPage - 1) * PC_PAGE_SIZE, pcPage * PC_PAGE_SIZE);
     const pagedData = {};
-    pagedKeys.forEach(key => {
-      pagedData[key] = grouped[key];
-    });
-
-    return { pagedGroups: pagedData, totalPcPages: totalPages };
+    pagedKeys.forEach(k => pagedData[k] = grouped[k]);
+    return { pagedGroups: pagedData, totalPcPages: Math.ceil(keys.length / PC_PAGE_SIZE) || 1 };
   }, [phanCongList, pcSearch, pcPage]);
 
-  // ================= 3. HANDLERS =================
-  const handleSubmit = async () => {
-    if (!selectedBacSi || !form.dvktId || !form.caLamViecId) return alert("Thiếu thông tin!");
+  // ================= 4. HANDLERS =================
+  const toggleSelection = (field, value) => {
+    setForm(prev => ({
+      ...prev,
+      [field]: prev[field].includes(value) ? prev[field].filter(x => x !== value) : [...prev[field], value]
+    }));
+  };
+
+  const toggleCaRole = (caId) => {
+    setForm(prev => {
+      const currentRoles = { ...prev.selectedCaRoles };
+      if (!currentRoles[caId]) currentRoles[caId] = "DOC_KQ";
+      else if (currentRoles[caId] === "DOC_KQ") currentRoles[caId] = "THUC_HIEN";
+      else delete currentRoles[caId];
+      return { ...prev, selectedCaRoles: currentRoles };
+    });
+  };
+
+  const handleBulkSubmit = async () => {
+    const { selectedDvktIds, selectedThus, selectedCaRoles } = form;
+    const caIds = Object.keys(selectedCaRoles);
+    if (!selectedBacSi || !selectedDvktIds.length || !selectedThus.length || !caIds.length) return alert("Thiếu thông tin!");
     try {
       setLoading(true);
-      await phanCongService.create({ ...form, bacSiId: selectedBacSi.id, caLamViecId: Number(form.caLamViecId), dvktId: Number(form.dvktId) });
-      loadPhanCong(selectedBacSi.id);
-      setForm({ ...form, dvktId: "" });
-    } catch (err) { alert("Lỗi phân công!"); } finally { setLoading(false); }
+      const reqs = selectedDvktIds.flatMap(dvId => 
+        selectedThus.flatMap(thu => 
+          caIds.map(caId => phanCongService.create({
+            bacSiId: selectedBacSi.id, dvktId: Number(dvId), thu, caLamViecId: Number(caId), vaiTro: selectedCaRoles[caId]
+          }))
+        )
+      );
+      await Promise.all(reqs);
+      alert("Thành công!");
+      loadDoctorData(selectedBacSi.id);
+    } catch (err) { alert("Lỗi lưu!"); } finally { setLoading(false); }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Xóa phân công này?")) return;
-    await phanCongService.remove(id);
-    loadPhanCong(selectedBacSi.id);
+    if (window.confirm("Xóa phân công?")) {
+      await phanCongService.remove(id);
+      loadDoctorData(selectedBacSi.id);
+    }
   };
 
-  // ================= 4. RENDER =================
   const styles = {
-    colCard: { background: '#fff', borderRadius: '12px', padding: '15px', border: '1px solid #e0e0e0', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', height: '100%' },
-    tag: (vaiTro) => ({
-      background: vaiTro === "DOC_KQ" ? "#e7f5ff" : "#ebfbee",
-      color: vaiTro === "DOC_KQ" ? "#1971c2" : "#2f9e44",
-      border: `1px solid ${vaiTro === "DOC_KQ" ? "#a5d8ff" : "#b2f2bb"}`,
-      padding: '3px 8px', borderRadius: '6px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '5px'
-    }),
-    paginationBtn: { padding: '5px 10px', cursor: 'pointer', background: '#fff', border: '1px solid #ddd', borderRadius: '4px' }
+    colCard: { background: '#fff', borderRadius: '12px', padding: '15px', border: '1px solid #e0e0e0', display: 'flex', flexDirection: 'column', height: '650px' },
+    paginationBtn: { padding: '5px 12px', cursor: 'pointer', background: '#fff', border: '1px solid #ddd', borderRadius: '4px', fontSize: '12px' },
+    tag: (v) => ({
+      background: v === "DOC_KQ" ? "#e7f5ff" : "#ebfbee", color: v === "DOC_KQ" ? "#1971c2" : "#2f9e44",
+      border: `1px solid ${v === "DOC_KQ" ? "#a5d8ff" : "#b2f2bb"}`, padding: '2px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold'
+    })
   };
 
   return (
-    <div style={{ padding: '25px', backgroundColor: '#f8f9fa', minHeight: '100vh', fontFamily: 'Segoe UI' }}>
-      <h2 style={{ marginBottom: '25px', color: '#333', textAlign: 'center' }}>🗓️ Hệ thống Điều phối Phân công</h2>
+    <div style={{ padding: '20px', backgroundColor: '#f8f9fa', minHeight: '100vh', fontFamily: 'Segoe UI' }}>
+      <h2 style={{ textAlign: 'center', marginBottom: '20px' }}>🗓️ Quản lý Phân công Bác sĩ</h2>
 
-      <div style={{ display: "grid", gridTemplateColumns: "280px 1fr 320px", gap: '20px', alignItems: 'stretch' }}>
+      <div style={{ display: "grid", gridTemplateColumns: "280px 1fr 340px", gap: '15px' }}>
         
-        {/* CỘT 1 */}
+        {/* CỘT 1: BÁC SĨ */}
         <div style={styles.colCard}>
-          <h4 style={{ margin: '0 0 15px 0' }}>👨‍⚕️ Bác sĩ</h4>
-          <input type="text" placeholder="Tìm tên bác sĩ..." value={search} onChange={(e) => {setSearch(e.target.value); setBsPage(1);}}
-            style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ddd', marginBottom: '15px', boxSizing: 'border-box' }} />
-          
-          <div style={{ minHeight: '400px' }}>
+          <h4>👨‍⚕️ Bác sĩ</h4>
+          <input type="text" placeholder="Tìm kiếm..." style={{padding:'8px', marginBottom:'10px'}} onChange={e => {setSearch(e.target.value); setBsPage(1);}} />
+          <div style={{ flex: 1, overflowY: 'auto' }}>
             {pagedBacSi.map(bs => (
-                <div key={bs.id} onClick={() => setSelectedBacSi(bs)}
-                style={{ padding: '12px', borderRadius: '8px', cursor: 'pointer', marginBottom: '8px',
-                    background: selectedBacSi?.id === bs.id ? "#409eff" : "#fff",
-                    color: selectedBacSi?.id === bs.id ? "#fff" : "#333",
-                    border: `1px solid ${selectedBacSi?.id === bs.id ? "#409eff" : "#eee"}`
-                }}>
+              <div key={bs.id} onClick={() => setSelectedBacSi(bs)} style={{ padding: '10px', cursor: 'pointer', background: selectedBacSi?.id === bs.id ? "#409eff" : "#fff", color: selectedBacSi?.id === bs.id ? "#fff" : "#333", borderRadius: '6px', marginBottom: '5px', border: '1px solid #eee' }}>
                 <b>{bs.hoTen}</b>
-                <div style={{ fontSize: '11px', opacity: 0.8 }}>Mã: {bs.maBacSi}</div>
-                </div>
+              </div>
             ))}
           </div>
-
-          <div style={{ textAlign: 'center', marginTop: '15px', display: 'flex', justifyContent: 'center', gap: '5px' }}>
+          {/* PHÂN TRANG CỘT 1 */}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '5px', paddingTop: '10px', borderTop: '1px solid #eee' }}>
             <button style={styles.paginationBtn} disabled={bsPage === 1} onClick={() => setBsPage(p => p - 1)}>◀</button>
-            <span style={{ alignSelf: 'center', fontSize: '13px' }}>{bsPage}/{totalBsPages}</span>
+            <span style={{ fontSize: '13px', alignSelf: 'center' }}>{bsPage}/{totalBsPages}</span>
             <button style={styles.paginationBtn} disabled={bsPage === totalBsPages} onClick={() => setBsPage(p => p + 1)}>▶</button>
           </div>
         </div>
 
-        {/* CỘT 2: PHÂN TRANG CHO DỊCH VỤ ĐÃ NHÓM */}
+        {/* CỘT 2: LỊCH TRỰC */}
         <div style={styles.colCard}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-            <h4 style={{ margin: 0 }}>📋 Lịch: <span style={{ color: '#409eff' }}>{selectedBacSi?.hoTen}</span></h4>
-            <input type="text" placeholder="Lọc nhanh..." value={pcSearch} onChange={e => {setPcSearch(e.target.value); setPcPage(1);}}
-              style={{ padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <h4 style={{margin:0}}>📋 Lịch: {selectedBacSi?.hoTen}</h4>
+            <input type="text" placeholder="Lọc..." style={{padding:'4px 8px'}} onChange={e => {setPcSearch(e.target.value); setPcPage(1);}} />
           </div>
-
-          <div style={{ minHeight: '500px' }}>
-            {Object.entries(pagedGroups).length === 0 ? <p style={{ textAlign: 'center', color: '#999', marginTop: '50px' }}>Chưa có dữ liệu phân công.</p> :
-              Object.entries(pagedGroups).map(([tenDvkt, byThu]) => (
-                <div key={tenDvkt} style={{ border: '1px solid #eee', borderRadius: '10px', marginBottom: '15px', overflow: 'hidden' }}>
-                  <div style={{ background: '#f8f9fa', padding: '10px 15px', fontWeight: 'bold', fontSize: '14px', borderBottom: '1px solid #eee', color: '#555' }}>💉 {tenDvkt}</div>
-                  <div style={{ padding: '10px' }}>
-                    {Object.entries(byThu).map(([thu, items]) => (
-                      <div key={thu} style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '8px 0', borderBottom: '1px solid #f9f9f9' }}>
-                        <div style={{ minWidth: '45px', fontWeight: 'bold', color: '#409eff' }}>{thu}</div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                          {items.map(pc => (
-                            <div key={pc.id} style={styles.tag(pc.vaiTro)}>
-                              <b>{pc.tenCa}</b>: {pc.vaiTro === "DOC_KQ" ? "Đọc" : "Làm"}
-                              <span onClick={() => handleDelete(pc.id)} style={{ cursor: 'pointer', fontWeight: 'bold', marginLeft: '5px' }}>×</span>
-                            </div>
-                          ))}
-                        </div>
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {Object.entries(pagedGroups).map(([ten, byThu]) => (
+              <div key={ten} style={{ border: '1px solid #eee', borderRadius: '8px', marginBottom: '10px' }}>
+                <div style={{ background: '#f8f9fa', padding: '6px 10px', fontWeight: 'bold', fontSize: '13px' }}>💉 {ten}</div>
+                <div style={{ padding: '8px' }}>
+                  {Object.entries(byThu).map(([thu, items]) => (
+                    <div key={thu} style={{ display: 'flex', gap: '10px', marginBottom: '5px' }}>
+                      <div style={{ width: '35px', fontWeight: 'bold', color: '#409eff', fontSize: '12px' }}>{thu}</div>
+                      <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                        {items.map(pc => (
+                          <div key={pc.id} style={styles.tag(pc.vaiTro)}>
+                            {pc.tenCa}: {pc.vaiTro === "DOC_KQ" ? "Đọc" : "Làm"}
+                            <span onClick={() => handleDelete(pc.id)} style={{ marginLeft: '5px', cursor: 'pointer' }}>×</span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))}
                 </div>
-              ))
-            }
+              </div>
+            ))}
           </div>
-
-          {/* Điều khiển phân trang cột giữa */}
-          <div style={{ textAlign: 'center', marginTop: '10px', display: 'flex', justifyContent: 'center', gap: '10px' }}>
-             <button style={styles.paginationBtn} disabled={pcPage === 1} onClick={() => setPcPage(p => p - 1)}>Trang trước</button>
-             <span style={{ alignSelf: 'center', fontWeight: 'bold' }}>{pcPage} / {totalPcPages}</span>
-             <button style={styles.paginationBtn} disabled={pcPage === totalPcPages} onClick={() => setPcPage(p => p + 1)}>Trang sau</button>
+          {/* PHÂN TRANG CỘT 2 */}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', paddingTop: '10px', borderTop: '1px solid #eee' }}>
+            <button style={styles.paginationBtn} disabled={pcPage === 1} onClick={() => setPcPage(p => p - 1)}>Trang trước</button>
+            <span style={{ fontWeight: 'bold', alignSelf: 'center' }}>{pcPage} / {totalPcPages}</span>
+            <button style={styles.paginationBtn} disabled={pcPage === totalPcPages} onClick={() => setPcPage(p => p + 1)}>Trang sau</button>
           </div>
         </div>
 
-        {/* CỘT 3 */}
+        {/* CỘT 3: FORM GÁN NHANH */}
         <div style={styles.colCard}>
-            <h4 style={{ margin: '0 0 15px 0' }}>➕ Thêm Phân công</h4>
-            {/* ... Giữ nguyên phần Form ... */}
-            <div style={{ background: '#f9f9f9', padding: '12px', borderRadius: '8px', marginBottom: '15px' }}>
-                <select style={{ width: '100%', padding: '8px', marginBottom: '10px' }} value={filterDvktChaId} onChange={e => setFilterDvktChaId(e.target.value)}>
-                    <option value="">-- Tất cả nhóm --</option>
-                    <option value="null">Nhóm Gốc</option>
-                    {dvktList.filter(d => !d.dvktChaId).map(d => <option key={d.id} value={d.id}>{d.tenDvkt}</option>)}
-                </select>
-                <input type="text" placeholder="Tìm DV nhanh..." value={dvktSearch} onChange={e => setDvktSearch(e.target.value)} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} />
-            </div>
-
-            <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Dịch vụ:</label>
-            <select style={{ width: '100%', padding: '10px', marginBottom: '15px', borderRadius: '6px' }} value={form.dvktId} onChange={e => setForm({...form, dvktId: e.target.value})}>
-                <option value="">-- Chọn DVKT ({filteredDvktOptions.length}) --</option>
-                {filteredDvktOptions.map(d => <option key={d.id} value={d.id}>{d.tenDvkt}</option>)}
+          <h4 style={{color: '#d46b08'}}>➕ Gán theo Năng lực</h4>
+          <div style={{ background: '#fffbe6', padding: '8px', borderRadius: '8px', marginBottom: '10px', border: '1px solid #ffe58f' }}>
+            <select style={{ width: '100%', padding: '5px', marginBottom: '5px' }} onChange={e => setFilterDvktChaId(e.target.value)}>
+              <option value="">-- Tất cả nhóm --</option>
+              {dvktGroups.map(g => <option key={g.id} value={g.id}>{g.tenDvkt}</option>)}
             </select>
+            <input type="text" placeholder="Tìm dịch vụ..." style={{width:'100%', padding:'5px', boxSizing:'border-box'}} onChange={e => setDvktSearch(e.target.value)} />
+          </div>
 
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
-                <div style={{ flex: 1 }}>
-                <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Thứ:</label>
-                <select style={{ width: '100%', padding: '10px' }} value={form.thu} onChange={e => setForm({...form, thu: e.target.value})}>
-                    {["T2","T3","T4","T5","T6","T7","CN"].map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
+          <div style={{ flex: 1, overflowY: 'auto', border: '1px solid #ddd', padding: '5px', borderRadius: '6px' }}>
+            {uniqueNangLucOptions.map(d => (
+              <div key={d.id} style={{ padding: '3px 0', borderBottom: '1px solid #f0f0f0', fontSize: '12px' }}>
+                <input type="checkbox" checked={form.selectedDvktIds.includes(d.id)} onChange={() => toggleSelection('selectedDvktIds', d.id)} />
+                <span style={{ marginLeft: '5px' }}>{d.ten}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', margin: '10px 0' }}>
+            {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map(t => (
+              <button key={t} onClick={() => toggleSelection('selectedThus', t)} style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #ddd', background: form.selectedThus.includes(t) ? "#409eff" : "#fff", color: form.selectedThus.includes(t) ? "#fff" : "#333", fontSize: '11px' }}>{t}</button>
+            ))}
+          </div>
+
+          <div style={{ marginBottom: '10px' }}>
+            {caLamViecList.map(c => {
+              const role = form.selectedCaRoles[c.id];
+              return (
+                <div key={c.id} onClick={() => toggleCaRole(c.id)} style={{ padding: '8px', borderRadius: '6px', cursor: 'pointer', marginBottom: '5px', border: '1px solid', background: role === "DOC_KQ" ? "#e7f5ff" : role === "THUC_HIEN" ? "#ebfbee" : "#fff", borderColor: role === "DOC_KQ" ? "#1971c2" : role === "THUC_HIEN" ? "#2f9e44" : "#ddd", display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                  <b>{c.tenCa}</b>
+                  <span>{role === "DOC_KQ" ? "📖 Đọc" : role === "THUC_HIEN" ? "🛠️ Làm" : "Chọn..."}</span>
                 </div>
-                <div style={{ flex: 1 }}>
-                <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Ca:</label>
-                <select style={{ width: '100%', padding: '10px' }} value={form.caLamViecId} onChange={e => setForm({...form, caLamViecId: e.target.value})}>
-                    <option value="">Ca</option>
-                    {caLamViecList.map(c => <option key={c.id} value={c.id}>{c.tenCa}</option>)}
-                </select>
-                </div>
-            </div>
+              );
+            })}
+          </div>
 
-            <label style={{ fontSize: '12px', fontWeight: 'bold' }}>Vai trò:</label>
-            <select style={{ width: '100%', padding: '10px', marginBottom: '20px' }} value={form.vaiTro} onChange={e => setForm({...form, vaiTro: e.target.value})}>
-                <option value="DOC_KQ">Đọc kết quả</option>
-                <option value="THUC_HIEN">Thực hiện</option>
-            </select>
-
-            <button onClick={handleSubmit} disabled={loading} style={{ width: '100%', padding: '12px', background: '#40c057', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
-                {loading ? "ĐANG LƯU..." : "LƯU PHÂN CÔNG"}
-            </button>
+          <button onClick={handleBulkSubmit} disabled={loading} style={{ width: '100%', padding: '12px', background: '#40c057', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
+            {loading ? "ĐANG LƯU..." : "XÁC NHẬN GÁN"}
+          </button>
         </div>
+
       </div>
     </div>
   );

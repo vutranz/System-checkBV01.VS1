@@ -52,6 +52,19 @@ boolean existsByBacSi_IdAndDvkt_IdAndThuAndCaLamViec_IdAndVaiTro(
         VaiTroBacSi vaiTro
 );
 
+boolean existsByBacSi_IdAndThuAndCaLamViec_Id(
+            Long bacSiId,
+            ThuTrongTuan thu,
+            Long caId
+    );
+
+    boolean existsByBacSi_IdAndThuAndCaLamViec_IdAndVaiTro(
+            Long bacSiId,
+            ThuTrongTuan thu,
+            Long caId,
+            VaiTroBacSi vaiTro
+    );
+
     List<PhanCongNangLuc> findByBacSiId(Long bacSiId);
 
     List<PhanCongNangLuc> findByDvktId(Long dvktId);
