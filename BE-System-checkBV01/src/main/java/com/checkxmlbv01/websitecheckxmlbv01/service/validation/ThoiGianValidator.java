@@ -5,7 +5,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -25,6 +24,8 @@ import com.checkxmlbv01.websitecheckxmlbv01.domain.xml.xml1;
 import com.checkxmlbv01.websitecheckxmlbv01.domain.xml.xml2;
 import com.checkxmlbv01.websitecheckxmlbv01.domain.xml.xml3;
 import java.util.Optional;
+
+
 import com.checkxmlbv01.websitecheckxmlbv01.domain.xml.xml4;
 import com.checkxmlbv01.websitecheckxmlbv01.repository.BacSiRepository;
 import com.checkxmlbv01.websitecheckxmlbv01.repository.CaLamViecRepository;
@@ -35,6 +36,7 @@ public class ThoiGianValidator {
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyyMMddHHmm");
     private static final String NHOM_CONG_KHAM = "Công Khám";
+    private static final String MA_LOAI_KCB_KHAM_BENH = "01";
     private static final String MA_LOAI_KCB_NGOAI_TRU = "02";
 
     private final CaLamViecRepository caRepo;
@@ -380,7 +382,7 @@ public class ThoiGianValidator {
     }
 }
 
-    private void checkMaLoaiKcbThuThuat(xml1 hs,
+    /*private void checkMaLoaiKcbThuThuat(xml1 hs,
                                             List<xml3> dsDv,
                                             Map<String, DichVuKyThuat> dvktMap,
                                             ErrorKCBGroup group) {
@@ -402,7 +404,61 @@ public class ThoiGianValidator {
                 addError(group, hs, null, null, null,
                         "Có công khám (YHCT) và phát sinh thủ thuật → mã loại KCB phải là (điều trị ngoại trú)");
             }
-        }
+        }*/
+
+    private void checkMaLoaiKcbThuThuat(xml1 hs,
+                                    List<xml3> dsDv,
+                                    Map<String, DichVuKyThuat> dvktMap,
+                                    ErrorKCBGroup group) {
+
+    if (hs == null || dsDv == null || dsDv.isEmpty()) return;
+
+    boolean hasThuThuat = dsDv.stream()
+            .map(dv -> dvktMap.get(dv.getMaDichVu()))
+            .filter(Objects::nonNull)
+            .anyMatch(this::laThuThuat);
+
+    String maCongKham = dsDv.stream()
+            .filter(dv -> laCongKham(dvktMap.get(dv.getMaDichVu())))
+            .map(xml3::getMaDichVu)
+            .findFirst()
+            .orElse(null);
+
+    if (maCongKham == null) {
+        return;
+    }
+
+    boolean laKhamBenh = MA_LOAI_KCB_KHAM_BENH.equals(hs.getMaLoaiKcb());
+    boolean laNgoaiTru = MA_LOAI_KCB_NGOAI_TRU.equals(hs.getMaLoaiKcb());
+
+    switch (maCongKham) {
+
+        // Các công khám này luôn phải là Khám bệnh
+        case "03.18":
+        case "10.19":
+        case "02.03":
+            if (!laKhamBenh) {
+                addError(group, hs, null, null, null,
+                        "Công khám " + maCongKham + " phải có mã loại KCB là Khám bệnh");
+            }
+            break;
+
+        // Công khám YHCT
+        case "08.16":
+            if (hasThuThuat) {
+                if (!laNgoaiTru) {
+                    addError(group, hs, null, null, null,
+                            "Công khám 08.16 có phát sinh thủ thuật → mã loại KCB phải là Điều trị ngoại trú");
+                }
+            } else {
+                if (!laKhamBenh) {
+                    addError(group, hs, null, null, null,
+                            "Công khám 08.16 không phát sinh thủ thuật → mã loại KCB phải là Khám bệnh");
+                }
+            }
+            break;
+    }
+}        
 
     /**
  * Kiểm tra BS chỉ định và BS thực hiện trong hồ sơ:
@@ -447,6 +503,7 @@ private void checkBsChuanTrongHoSo(xml1 hs, List<xml3> dsDv,
     }
 }
 
+   
     /* ========================= MAIN ========================= */
 
     public void validate(xml1 hs, List<xml3> dsDv, List<xml2> dsThuoc,
