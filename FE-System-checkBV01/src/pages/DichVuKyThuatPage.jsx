@@ -1,4 +1,5 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
+import * as XLSX from "xlsx";
 import * as service from "../services/dichVuKyThuatService";
 import * as nhomService from "../services/nhomDvktService";
 import * as chuyenKhoaService from "../services/chuyenKhoaService";
@@ -27,9 +28,12 @@ const DichVuKyThuatPage = () => {
   const [chuyenKhoaList, setChuyenKhoaList] = useState([]);
   const [dvktList, setDvktList] = useState([]);
   
+  // Ref cho input file ngầm
+  const fileInputRef = useRef(null);
+
   // --- STATE TÌM KIẾM & LỌC ---
   const [filterDvktChaId, setFilterDvktChaId] = useState("");
-  const [searchText, setSearchText] = useState(""); // Ô tìm kiếm văn bản
+  const [searchText, setSearchText] = useState("");
 
   const loadData = async () => {
     const data = await service.getAll();
@@ -53,15 +57,18 @@ const DichVuKyThuatPage = () => {
     loadOptions();
   }, []);
 
+  // Map ID -> Tên để hiển thị cột Excel cho đẹp
+  const nhomMap = useMemo(() => new Map(nhomList.map(n => [n.id, n.tenNhom])), [nhomList]);
+  const ckMap = useMemo(() => new Map(chuyenKhoaList.map(c => [c.id, c.tenChuyenKhoa])), [chuyenKhoaList]);
+  const dvktMap = useMemo(() => new Map(list.map(d => [d.id, d.tenDvkt])), [list]);
+
   // --- LOGIC TÌM KIẾM & LỌC KẾT HỢP ---
   const filteredList = useMemo(() => {
     return list.filter((item) => {
-      // 1. Lọc theo văn bản (Mã hoặc Tên)
       const matchesSearch = 
-        item.maDvkt.toLowerCase().includes(searchText.toLowerCase()) ||
-        item.tenDvkt.toLowerCase().includes(searchText.toLowerCase());
+        item.maDvkt?.toLowerCase().includes(searchText.toLowerCase()) ||
+        item.tenDvkt?.toLowerCase().includes(searchText.toLowerCase());
 
-      // 2. Lọc theo danh mục cha
       let matchesCategory = true;
       if (filterDvktChaId === "null") {
         matchesCategory = !item.dvktChaId;
@@ -76,6 +83,121 @@ const DichVuKyThuatPage = () => {
   const totalPages = Math.ceil(filteredList.length / PAGE_SIZE);
   const startIndex = (currentPage - 1) * PAGE_SIZE;
   const currentData = filteredList.slice(startIndex, startIndex + PAGE_SIZE);
+
+  // ================= 1. XỬ LÝ XUẤT FILE EXCEL =================
+  const handleExportExcel = () => {
+    if (filteredList.length === 0) {
+      return alert("Không có dữ liệu để xuất Excel!");
+    }
+
+    const dataToExport = filteredList.map((item, idx) => ({
+      "STT": idx + 1,
+      "Mã DVKT": item.maDvkt,
+      "Tên Dịch Vụ Kỹ Thuật": item.tenDvkt,
+      "TG Tối Thiểu (Phút)": item.thoiGianMin || 0,
+      "TG Tối Đa (Phút)": item.thoiGianMax || 0,
+      "Nhóm DVKT": nhomMap.get(item.nhomDvktId) || "",
+      "Chuyên Khoa": ckMap.get(item.chuyenKhoaId) || "",
+      "Dịch Vụ Cha": dvktMap.get(item.dvktChaId) || "Cấp cao nhất",
+      "Trạng Thái": item.hoatDong ? "Đang sử dụng" : "Tạm ngưng"
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+
+    // Auto fit width cột
+    worksheet["!cols"] = [
+      { wch: 6 },  // STT
+      { wch: 15 }, // Mã
+      { wch: 35 }, // Tên
+      { wch: 18 }, // Min
+      { wch: 18 }, // Max
+      { wch: 25 }, // Nhóm
+      { wch: 25 }, // Chuyên khoa
+      { wch: 30 }, // Cha
+      { wch: 15 }  // Trạng thái
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "DichVuKyThuat");
+
+    const fileName = `Danh_Sach_DVKT_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+  };
+
+  // ================= 2. XỬ LÝ NHẬP FILE EXCEL =================
+  const handleImportExcel = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        setLoading(true);
+        const bstr = evt.target.result;
+        const workbook = XLSX.read(bstr, { type: "binary" });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+        if (jsonData.length === 0) {
+          alert("File Excel rỗng!");
+          return;
+        }
+
+        // Tạo map đảo ngược Tên -> ID để map dữ liệu khi Import
+        const nhomNameToId = new Map(nhomList.map(n => [n.tenNhom?.trim().toLowerCase(), n.id]));
+        const ckNameToId = new Map(chuyenKhoaList.map(c => [c.tenChuyenKhoa?.trim().toLowerCase(), c.id]));
+        const dvktCodeToId = new Map(list.map(d => [d.maDvkt?.trim().toLowerCase(), d.id]));
+
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const row of jsonData) {
+          const maDvkt = row["Mã DVKT"] || row["maDvkt"];
+          const tenDvkt = row["Tên Dịch Vụ Kỹ Thuật"] || row["Tên DVKT"] || row["tenDvkt"];
+
+          if (!maDvkt || !tenDvkt) {
+            failCount++;
+            continue;
+          }
+
+          const nhomName = (row["Nhóm DVKT"] || "").toString().trim().toLowerCase();
+          const ckName = (row["Chuyên Khoa"] || "").toString().trim().toLowerCase();
+          const chaCode = (row["Mã DVKT Cha"] || "").toString().trim().toLowerCase();
+
+          const payload = {
+            maDvkt: String(maDvkt).trim(),
+            tenDvkt: String(tenDvkt).trim(),
+            thoiGianMin: Number(row["TG Tối Thiểu (Phút)"] || row["thoiGianMin"] || 0),
+            thoiGianMax: Number(row["TG Tối Đa (Phút)"] || row["thoiGianMax"] || 0),
+            hoatDong: row["Trạng Thái"] ? row["Trạng Thái"].toString().includes("dụng") : true,
+            nhomDvktId: nhomNameToId.get(nhomName) || null,
+            chuyenKhoaId: ckNameToId.get(ckName) || null,
+            dvktChaId: dvktCodeToId.get(chaCode) || null,
+          };
+
+          try {
+            await service.create(payload);
+            successCount++;
+          } catch (err) {
+            failCount++;
+          }
+        }
+
+        alert(`Nhập dữ liệu hoàn tất!\n- Thành công: ${successCount}\n- Thất bại: ${failCount}`);
+        await loadData();
+        await loadOptions();
+      } catch (error) {
+        console.error(error);
+        alert("Lỗi cấu trúc file Excel không hợp lệ!");
+      } finally {
+        setLoading(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      }
+    };
+
+    reader.readAsBinaryString(file);
+  };
 
   const handleSubmit = async () => {
     setLoading(true);
@@ -125,14 +247,15 @@ const DichVuKyThuatPage = () => {
     formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '15px' },
     input: { padding: '10px', borderRadius: '6px', border: '1px solid #dcdfe6', fontSize: '14px', outline: 'none' },
     label: { fontSize: '13px', fontWeight: '600', color: '#606266', marginBottom: '5px', display: 'block' },
-    filterBar: { display: 'flex', alignItems: 'center', gap: '15px', background: '#fff', padding: '15px 20px', borderRadius: '12px', marginBottom: '20px', borderLeft: '5px solid #409eff' },
-    searchInput: { padding: '10px 15px', borderRadius: '6px', border: '1px solid #409eff', fontSize: '14px', width: '300px', outline: 'none' },
+    filterBar: { display: 'flex', alignItems: 'center', gap: '15px', background: '#fff', padding: '15px 20px', borderRadius: '12px', marginBottom: '20px', borderLeft: '5px solid #409eff', flexWrap: 'wrap' },
+    searchInput: { padding: '10px 15px', borderRadius: '6px', border: '1px solid #409eff', fontSize: '14px', width: '260px', outline: 'none' },
     table: { width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff', borderRadius: '8px', overflow: 'hidden' },
     th: { background: '#f5f7fa', color: '#909399', padding: '12px 15px', textAlign: 'left', fontSize: '13px', borderBottom: '1px solid #ebeef5' },
     td: { padding: '12px 15px', fontSize: '14px', borderBottom: '1px solid #ebeef5', color: '#606266' },
     statusActive: { color: '#67c23a', background: '#f0f9eb', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' },
     statusInactive: { color: '#f56c6c', background: '#fef0f0', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' },
-    btnAction: { border: 'none', background: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', padding: '5px' }
+    btnAction: { border: 'none', background: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', padding: '5px' },
+    btnExcel: { padding: '9px 15px', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }
   };
 
   return (
@@ -145,7 +268,6 @@ const DichVuKyThuatPage = () => {
           {editingId ? "📝 Chỉnh sửa dịch vụ" : "➕ Thêm dịch vụ mới"}
         </div>
         <div style={styles.formGrid}>
-          {/* Các input form giữ nguyên như cũ */}
           <div>
             <label style={styles.label}>Mã DVKT</label>
             <input style={{ ...styles.input, width: '90%' }} value={form.maDvkt} onChange={(e) => setForm({ ...form, maDvkt: e.target.value })} />
@@ -189,15 +311,16 @@ const DichVuKyThuatPage = () => {
             </label>
             <button 
               onClick={handleSubmit} 
+              disabled={loading}
               style={{ padding: '10px 20px', backgroundColor: editingId ? '#e6a23c' : '#409eff', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
             >
-              {editingId ? "Cập nhật" : "Lưu lại"}
+              {loading ? "Đang xử lý..." : (editingId ? "Cập nhật" : "Lưu lại")}
             </button>
           </div>
         </div>
       </div>
 
-      {/* FILTER BAR CÓ Ô TÌM KIẾM */}
+      {/* FILTER BAR CÓ TÌM KIẾM & NÚT CÔNG CỤ EXCEL */}
       <div style={styles.filterBar}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ fontWeight: 'bold' }}>Tìm kiếm:</span>
@@ -209,10 +332,10 @@ const DichVuKyThuatPage = () => {
           />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ fontWeight: 'bold' }}>Phân loại:</span>
           <select 
-            style={{ ...styles.input, minWidth: '220px' }} 
+            style={{ ...styles.input, minWidth: '200px' }} 
             value={filterDvktChaId} 
             onChange={(e) => { setFilterDvktChaId(e.target.value); setCurrentPage(1); }}
           >
@@ -222,8 +345,29 @@ const DichVuKyThuatPage = () => {
           </select>
         </div>
 
-        <div style={{ marginLeft: 'auto', color: '#909399', fontSize: '14px' }}>
-          Hiển thị: <b>{filteredList.length}</b> kết quả
+        {/* Cụm Nút Xuất/Nhập Excel */}
+        <div style={{ display: 'flex', gap: '10px', marginLeft: 'auto' }}>
+          <button 
+            onClick={handleExportExcel}
+            style={{ ...styles.btnExcel, backgroundColor: '#67c23a', color: '#fff' }}
+          >
+            📊 Xuất Excel
+          </button>
+
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading}
+            style={{ ...styles.btnExcel, backgroundColor: '#e6a23c', color: '#fff' }}
+          >
+            📥 Nhập Excel
+          </button>
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleImportExcel} 
+            accept=".xlsx, .xls" 
+            style={{ display: 'none' }} 
+          />
         </div>
       </div>
 

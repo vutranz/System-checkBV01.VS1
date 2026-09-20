@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import * as XLSX from "xlsx"; // 1. Import thư viện xlsx
 import * as bacSiService from "../services/bacSiService";
 
 const initialForm = { maBacSi: "", hoTen: "", cchn: "", hoatDong: true };
@@ -23,8 +24,8 @@ const BacSiPage = () => {
   useEffect(() => { loadData(); }, []);
 
   const filteredList = list.filter(item => 
-    item.maBacSi.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.hoTen.toLowerCase().includes(searchTerm.toLowerCase())
+    item.maBacSi?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    item.hoTen?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const indexOfLastItem = currentPage * itemsPerPage;
@@ -33,6 +34,45 @@ const BacSiPage = () => {
   const totalPages = Math.ceil(filteredList.length / itemsPerPage);
 
   const paginate = (pageNumber) => setCurrentPage(pageNumber);
+
+  // 2. Hàm xử lý xuất Excel (Xuất danh sách đã lọc theo ô tìm kiếm)
+  const handleExportExcel = () => {
+    if (filteredList.length === 0) {
+      return alert("Không có dữ liệu để xuất file Excel!");
+    }
+
+    // Map lại dữ liệu để đẹp tiêu đề cột trong file Excel
+    const dataToExport = filteredList.map((item, index) => ({
+      "STT": index + 1,
+      "Mã Bác sĩ": item.maBacSi,
+      "Họ và Tên": item.hoTen,
+      "Số CCHN": item.cchn || "Chưa có",
+      "Trạng thái": item.hoatDong ? "Đang làm" : "Nghỉ"
+    }));
+
+    // Tạo worksheet từ mảng JSON
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+
+    // Chỉnh độ rộng tự động cho các cột trong Excel
+    const columnWidths = [
+      { wch: 6 },  // STT
+      { wch: 15 }, // Mã bác sĩ
+      { wch: 25 }, // Họ tên
+      { wch: 18 }, // CCHN
+      { wch: 15 }  // Trạng thái
+    ];
+    worksheet["!cols"] = columnWidths;
+
+    // Tạo workbook mới và thêm worksheet vào
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "DanhSachBacSi");
+
+    // Tạo tên file kèm ngày giờ xuất
+    const fileName = `Danh_Sach_Bac_Si_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+    // Tải file xuống
+    XLSX.writeFile(workbook, fileName);
+  };
 
   const handleSubmit = async () => {
     if (!form.maBacSi || !form.hoTen) return alert("Vui lòng nhập đủ Mã và Tên");
@@ -57,8 +97,22 @@ const BacSiPage = () => {
     formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '20px', alignItems: 'end' },
     input: { padding: '12px', borderRadius: '10px', border: '1px solid #cbd5e0', fontSize: '14px', outline: 'none' },
     
-    searchContainer: { marginBottom: '20px', display: 'flex', justifyContent: 'flex-end' },
+    searchContainer: { marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
     searchInput: { padding: '10px 15px', width: '300px', borderRadius: '10px', border: '1px solid #6366f1', outline: 'none', fontSize: '14px' },
+    btnExport: { 
+      padding: '10px 18px', 
+      borderRadius: '10px', 
+      border: 'none', 
+      background: '#10b981', 
+      color: '#fff', 
+      fontWeight: 'bold', 
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      fontSize: '14px',
+      transition: 'background 0.2s'
+    },
     
     table: { width: '100%', borderCollapse: 'collapse', background: '#fff' },
     th: { background: '#f8fafc', padding: '15px', textAlign: 'left', color: '#64748b', fontSize: '13px', borderBottom: '2px solid #f1f5f9' },
@@ -85,13 +139,21 @@ const BacSiPage = () => {
           <button 
             style={{ padding: '12px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', color: '#fff', fontWeight: 'bold', cursor: 'pointer' }}
             onClick={handleSubmit}
+            disabled={loading}
           >
             {editingId ? "Cập nhật" : "Thêm bác sĩ"}
           </button>
         </div>
       </div>
 
+      {/* KHU VỰC NÚT XUẤT EXCEL & TÌM KIẾM */}
       <div style={styles.searchContainer}>
+        {/* Nút Xuất Excel */}
+        <button style={styles.btnExport} onClick={handleExportExcel}>
+          📊 Xuất Excel
+        </button>
+
+        {/* Tìm kiếm */}
         <input 
           style={styles.searchInput}
           placeholder="🔍 Tìm mã hoặc tên bác sĩ..."
