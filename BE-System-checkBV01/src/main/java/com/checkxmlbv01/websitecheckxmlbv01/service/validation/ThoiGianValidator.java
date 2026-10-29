@@ -326,38 +326,62 @@ public class ThoiGianValidator {
 }
 
     private void checkThoiGianDVKT(xml1 hs, xml3 dv, DichVuKyThuat dvkt,
-                               ErrorKCBGroup group, LocalDateTime congKhamEndTime,
-                               Map<String, xml4> xml4Map,
-                               Map<String, BacSi> bacSiMap,
-                               boolean skipDongBo) {
+                            ErrorKCBGroup group, LocalDateTime congKhamEndTime,
+                            Map<String, xml4> xml4Map,
+                            Map<String, BacSi> bacSiMap,
+                            boolean skipDongBo) {
     try {
         boolean congKham = laCongKham(dvkt);
         LocalDateTime yl = parse(dv.getNgayYl());
         LocalDateTime thyl = parse(dv.getNgayThYl());
         LocalDateTime kq = parse(dv.getNgayKq());
 
-        LocalDateTime start = congKham ? yl : thyl;
+        // --- PHẦN 1: KIỂM TRA DÀNH RIÊNG CHO CÔNG KHÁM ---
+        if (congKham) {
+            // Kiểm tra thứ tự thời gian: YL < THYL < KQ
+            if (yl != null && thyl != null && !yl.isBefore(thyl)) {
+                addErrorDVKT(group, hs, dv, xml4Map, bacSiMap,
+                        "Công khám - YL (" + dv.getNgayYl() + ") phải < THYL (" + dv.getNgayThYl() + ")");
+            }
+            if (thyl != null && kq != null && !thyl.isBefore(kq)) {
+                addErrorDVKT(group, hs, dv, xml4Map, bacSiMap,
+                        "Công khám - THYL (" + dv.getNgayThYl() + ") phải < KQ (" + dv.getNgayKq() + ")");
+            }
+        } 
+        // --- PHẦN 2: KIỂM TRA DÀNH CHO CÁC DỊCH VỤ CẬN LÂM SÀNG (CLS) ---
+        else {
+            // YL của CLS phải bằng hoặc lớn hơn KQ công khám tối đa 2 phút
+            if (congKhamEndTime != null && yl != null && !skipDongBo) {
+                long diffCongKham = Duration.between(congKhamEndTime, yl).toMinutes();
+
+                if (diffCongKham < 0 || diffCongKham > 2) {
+                    addErrorDVKT(group, hs, dv, xml4Map, bacSiMap,
+                            "YL của CLS phải bằng hoặc lớn hơn KQ công khám tối đa 2 phút | KQ khám: "
+                                    + congKhamEndTime.format(FMT)
+                                    + ", YL: " + yl.format(FMT)
+                                    + " (lệch " + diffCongKham + " phút)");
+                }
+            }
+
+            // YL < THYL của CLS
+            if (yl != null && thyl != null && !yl.isBefore(thyl)) {
+                addErrorDVKT(group, hs, dv, xml4Map, bacSiMap,
+                        "YL (" + dv.getNgayYl() + ") phải < THYL (" + dv.getNgayThYl() + ")");
+            }
+
+            // THYL < KQ của CLS
+            if (thyl != null && kq != null && !thyl.isBefore(kq)) {
+                addErrorDVKT(group, hs, dv, xml4Map, bacSiMap,
+                        "THYL (" + dv.getNgayThYl() + ") phải < KQ (" + dv.getNgayKq() + ")");
+            }
+        }
+
+        // --- PHẦN 3: KIỂM TRA ĐỊNH MỨC THỜI GIAN THỰC HIỆN (MIN - MAX) CHUNG ---
+        // Đối với Công Khám: tính từ THYL đến KQ
+        // Đối với CLS: tính từ THYL đến KQ (hoặc YL đến KQ tùy logic cũ, ở đây giữ nguyên start = congKham ? yl : thyl, hoặc nếu công khám bắt buộc dùng THYL-KQ thì dùng biến riêng)
+        LocalDateTime start = congKham ? thyl : thyl; // Công khám dùng THYL làm mốc bắt đầu tính thời gian thực hiện
         LocalDateTime end = kq;
-
-        if (!congKham && yl != null && thyl != null && !yl.isBefore(thyl)) {
-            addErrorDVKT(group, hs, dv, xml4Map, bacSiMap,
-                    "YL (" + dv.getNgayYl() + ") phải < THYL (" + dv.getNgayThYl() + ")");
-        }
-
-        if (!congKham && congKhamEndTime != null && yl != null && !skipDongBo) {
-            long diff = Duration.between(congKhamEndTime, yl).toMinutes();
-
-            if (diff < 1)
-                addErrorDVKT(group, hs, dv, xml4Map, bacSiMap,
-                        "CLS phải sau công khám ≥1p | KQ khám: "
-                                + congKhamEndTime.format(FMT)
-                                + ", YL: " + yl.format(FMT));
-
-            if (diff > 60)
-                addErrorDVKT(group, hs, dv, xml4Map, bacSiMap,
-                        "CLS không đồng bộ công khám (" + diff + " phút)");
-        }
-
+        
         if (start != null && end != null
                 && dvkt.getThoiGianMin() != null
                 && dvkt.getThoiGianMax() != null) {
@@ -371,7 +395,8 @@ public class ThoiGianValidator {
             }
         }
 
-        if (start == null || end == null) {
+        // Kiểm tra thiếu dữ liệu thời gian cơ bản
+        if (yl == null || thyl == null || kq == null) {
             addErrorDVKT(group, hs, dv, xml4Map, bacSiMap,
                     "Thiếu thời gian YL/THYL/KQ");
         }
