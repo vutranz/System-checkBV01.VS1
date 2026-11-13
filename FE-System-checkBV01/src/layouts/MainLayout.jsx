@@ -16,7 +16,7 @@ const MainLayout = () => {
         <nav style={styles.nav}>
           <NavLink to="/" style={styles.link}>Trang chủ</NavLink>
           <NavLink to="/ho-so" style={styles.link}>Thêm File XMl</NavLink>
-
+          <NavLink to="/doi-soat" style={styles.link}>Đối Soát File BHYT</NavLink> {/* <-- Thêm vào đây */}
           {/* NHÓM 1 */}
           <p style={styles.navLabel}>DANH MỤC QUẢN LÝ</p>
           <NavLink to="/bac-si" style={styles.link}>Quản lý Bác sĩ</NavLink>

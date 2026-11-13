@@ -11,6 +11,7 @@ import LichLamViecTheoThuPage from "./pages/LichLamViecTheoThuPage";
 import NangLucPage from "./pages/NangLucPage";
 import PhanCongNangLucPage from "./pages/PhanCongNangLucPage";
 import ImportHoSoPage from "./pages/ImportHoSoPage";
+import DoiSoatPage from "./pages/DoiSoatPage"; // <-- 1. Import trang đối soát vào đây
 
 function App() {
   return (
@@ -32,7 +33,11 @@ function App() {
         <Route path="lich-lam-viec-theo-thu" element={< LichLamViecTheoThuPage/>} />
         <Route path="nang-luc-chuyen-mon" element={< NangLucPage/>} />
         <Route path="phan-cong-nang-luc" element={< PhanCongNangLucPage/>} />
-         <Route path="ho-so" element={< ImportHoSoPage/>} />
+        <Route path="ho-so" element={< ImportHoSoPage/>} />
+        
+        {/* 2. Thêm route đối soát vào đây */}
+        <Route path="doi-soat" element={<DoiSoatPage />} />
+
       </Route>
     </Routes>
   );
